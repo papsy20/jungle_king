@@ -121,4 +121,47 @@ with st.expander("👴 *'Listen closely to the Laws of the Valley...'*", expande
     """)
 
 if jk.turn == 0:
-    jk.difficulty = st.select_slider("👴 *'How heavy
+    jk.difficulty = st.select_slider("👴 *'How heavy shall the crown be?'*", options=["Low", "Medium", "High"], value=jk.difficulty)
+    jk.reset()
+
+# Sidebar
+with st.sidebar:
+    st.header("📜 High King's Library")
+    if st.button("New Era"): jk.reset(); st.rerun()
+    if jk.history: st.table(pd.DataFrame(jk.history).tail(3))
+
+# Metrics
+l_e, d_e, f_e, v_e = get_status_emojis(jk.lions, jk.deer, jk.forest, jk.villagers, jk.prev_forest_cap)
+c1, c2, c3, c4 = st.columns(4)
+c1.metric(f"{l_e} Lions", jk.lions)
+c2.metric(f"{d_e} Deer", jk.deer)
+c3.metric(f"{f_e} Forest", f"{jk.forest:.0f}%")
+c4.metric(f"{v_e} Folk", jk.villagers)
+
+st.divider()
+
+if not jk.game_over:
+    st.subheader(f"{'⚖️ Harmony' if is_harmonious else '🌪️ Chaos'} | Streak: {jk.stable_streak}/{jk.cfg['win_target']}")
+    st.progress(min(1.0, jk.stable_streak / jk.cfg['win_target']))
+
+    action = st.radio("👴 *'Which Decree shall be read?'*", ["Hunt Deer", "Hunt Lions", "Expand Village", "Protect Forest"], horizontal=True)
+
+    # Forecast
+    w = jk.get_difficulty_weight()
+    f_l, f_d, f_f, f_v, _, _, _, _ = jk.calculate_mechanics(action.lower().replace(" ", "_").replace("lions","lion"), jk.lions, jk.deer, jk.forest, jk.villagers, w, jk.prev_forest_cap)
+    n_ratio = f_l / max(1, f_d)
+    h_col = "green" if (0.12 <= n_ratio <= 0.42) else "red"
+
+    with st.container(border=True):
+        st.caption("🔮 **Elder's Vision**")
+        v1, v2, v3 = st.columns([2,2,3])
+        v1.write(f"🦁 {f_l-jk.lions:+} | 🦌 {f_d-jk.deer:+}")
+        v2.write(f"🌳 {f_f-jk.forest:+.1f}%")
+        v3.markdown(f"**Ratio:** <span style='color:{h_col}'>{n_ratio:.2f}</span>", unsafe_allow_html=True)
+
+    if st.button("PROCLAIM DECREE", type="primary", use_container_width=True):
+        jk.step(action.lower().replace(" ", "_").replace("lions","lion")); st.rerun()
+else:
+    if jk.victory: st.balloons(); st.success("👑 **LEGENDARY HARMONY ATTAINED!**")
+    else: st.error(f"💀 **THE ERA HAS COLLAPSED:** {jk.failure_reason}")
+    st.button("🔄 Start New Reign", on_click=jk.reset, use_container_width=True)

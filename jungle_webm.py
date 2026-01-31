@@ -1,182 +1,176 @@
 import streamlit as st
 import random
 import pandas as pd
-from datetime import date
 
 # -----------------------------
-# The Jungle Spirit (Game Logic)
+# THE GAME ENGINE
 # -----------------------------
 class JungleKing:
     def __init__(self):
         self.reset()
 
     def reset(self):
+        # v3.1 "Goldilocks" Starting Parameters
         self.lions = 5
-        self.deer = 25
-        self.forest = 50
-        self.villagers = 12 
+        self.deer = 55
+        self.forest = 80
+        self.villagers = 10
         self.turn = 0
         self.stable_streak = 0
         self.cumulative_score = 0
         self.game_over = False
         self.victory = False
-        self.last_news = [] # Jovial turn feedback
+        self.last_news = []
         self.history = []
 
-    def get_status_emoji(self, category, val):
-        """Simple status checks for the UI."""
+    def get_status_ui(self, category, val):
         if category == "lions":
-            return "🦁" if val > 2 else "🥀" if val > 0 else "💀"
+            if val <= 0: return "💀", "Extinct"
+            return "🦁", "Healthy"
         if category == "deer":
-            return "🦌" if val > 10 else "🍃" if val > 0 else "🦴"
+            if val <= 0: return "🦴", "Gone"
+            return "🦌", "Thriving"
         if category == "forest":
-            return "🌳" if val > 30 else "🪵" if val > 15 else "🔥"
-        return "🏡"
+            if val <= 20: return "🔥", "Critical"
+            return "🌳", "Lush"
+        return "🏡", "Good"
 
     def step(self, action: str):
         if self.game_over: return
         self.turn += 1
         self.last_news = []
-        
-        # --- 1. Your Choices (Village Deeds) ---
+
+        # 1. Weighted Difficulty Logic
+        # Decay parameters start scaling up after Year 25 to ensure difficulty by Year 35.
+        diff_weight = 1.0
+        if self.turn > 25:
+            # Increases decay by 7% per year after turn 25
+            diff_weight = 1.0 + ((self.turn - 25) * 0.07)
+
+        # 2. Player Commands (Planned Change)
         if action == 'hunt_deer':
-            hunted = random.randint(5, 8)
+            hunted = random.randint(4, 6)
             self.deer -= hunted
-            self.last_news.append(f"🍖 Feast! We caught {hunted} deer for the village.")
+            self.last_news.append(f"🏹 Meat: The hunters brought back {hunted} deer.")
         elif action == 'hunt_lion':
-            killed = random.randint(1, 2)
-            self.lions = max(0, self.lions - killed)
-            self.last_news.append(f"🛡️ Safety: We chased away {killed} lions.")
+            self.lions = max(0, self.lions - 1)
+            self.last_news.append("⚔️ Cull: A lion was chased into the far hills.")
         elif action == 'expand_village':
-            # Harder to build houses if the woods are thin
-            cost = 15 if self.forest < 30 else 10
-            gain = random.randint(3, 5)
+            # Weighted Decay: Forest cost increases over time
+            cost = 8 * diff_weight
+            gain = random.randint(2, 4)
             self.forest -= cost
             self.villagers += gain
-            self.last_news.append(f"🏗️ Building: New homes built! +{gain} people, but trees were cut.")
+            self.last_news.append(f"🏗️ Growth: +{gain} people, but -{cost:.1f} forest.")
         elif action == 'protect_forest':
-            # Bigger villages need more people to guard the woods
-            labor = 1 + (self.villagers // 15)
-            self.villagers = max(1, self.villagers - labor)
-            regen = random.randint(10, 15)
+            regen = random.randint(15, 20)
             self.forest = min(100, self.forest + regen)
-            self.last_news.append(f"🌱 Planting: We planted new saplings! (Labor: {labor} people).")
+            self.last_news.append(f"🌱 Care: The village restored {regen} forest.")
 
-        # --- 2. The Jungle's Mood (Natural Changes) ---
-        
-        # [The Lion Rule] No lions means the deer eat everything green!
-        if self.lions == 0 and self.deer > 5:
-            loss = random.randint(2, 4)
-            self.forest -= loss
-            self.last_news.append(f"🦗 Messy Woods: No lions to scare them, so deer ate {loss} units of forest!")
+        # 3. Nature & Weighted Decay Parameters
+        # Change: Deer Births (High fertility keeps 12-16 median stable)
+        cap = self.forest * 1.1
+        growth_rate = 0.26
+        babies = int(self.deer * growth_rate * (1 - (self.deer / max(1, cap))))
+        self.deer += max(4, babies)
 
-        # [Baby Deer] More forest space means more deer families.
-        cap = self.forest * 0.75
-        babies = max(1, int(self.deer * 0.20 * (1 - (self.deer / max(1, cap)))))
-        self.deer += babies
-        
-        # [Hungry Lions] Lions hunt deer to stay strong.
-        eaten_by_lions = min(int(self.lions * self.deer * 0.035), self.deer)
+        # Change: Predation (Lions hunt)
+        eaten_by_lions = min(self.lions, self.deer)
         self.deer -= eaten_by_lions
-        
-        # [Hungry People] Every 2 neighbors need 1 deer per turn.
-        dinner_needed = int(self.villagers * 0.5)
-        if self.deer < dinner_needed:
-            sadness = max(1, int((dinner_needed - self.deer) * 0.6))
-            self.villagers -= sadness
+
+        # Decay: Human Hunger (Weighted Difficulty)
+        food_needed = max(1, int((self.villagers // 4) * diff_weight))
+        if self.deer < food_needed:
+            lost = 1
+            self.villagers = max(0, self.villagers - lost)
             self.deer = 0
-            self.last_news.append(f"🥣 Empty Bowls: {sadness} people left the village due to hunger.")
+            self.last_news.append(f"🥣 Famine: {lost} person left the village.")
         else:
-            self.deer -= dinner_needed
+            self.deer -= food_needed
 
-        # [Sad Lions] If there's no deer to catch, the lions won't survive.
-        if self.lions > 0 and (eaten_by_lions / self.lions) < 1.0: 
+        # Decay: Lion Starvation (Weighted Difficulty)
+        lion_threshold = 0.6 * diff_weight
+        if self.lions > 0 and (eaten_by_lions / self.lions) < lion_threshold:
             self.lions -= 1
-            self.last_news.append("😿 A lion went hungry and left the pride.")
+            self.last_news.append("💀 Hunger: A lion left because prey was too scarce.")
 
-        # --- 3. Wrap Up ---
+        # Decay: Overgrazing (Only if lions are gone)
+        if self.lions <= 0:
+            self.forest -= (1.5 * diff_weight)
+
+        # 4. Wrap Up Logic
+        self.cumulative_score += int(self.lions * 15 + self.villagers * 8 + self.deer + self.forest)
         self.history.append({"Year": self.turn, "Lions": self.lions, "Deer": self.deer, "Forest": self.forest})
-        self.cumulative_score += int(self.lions * 15 + self.deer * 1 + self.villagers * 5 + self.forest * 1)
-        self.deer, self.lions, self.forest = max(0, self.deer), max(0, self.lions), max(0, self.forest)
-        
-        ratio = self.lions / max(1, self.deer)
-        if 0.15 <= ratio <= 0.35: self.stable_streak += 1
-        else: self.stable_streak = 0
 
-        if self.stable_streak >= 15: self.game_over, self.victory = True, True
-        elif any(v <= 0 for v in [self.villagers, self.deer, self.forest]): self.game_over = True
+        # Balance Window for Win Condition
+        ratio = self.lions / max(1, self.deer)
+        if 0.12 <= ratio <= 0.42:
+            self.stable_streak += 1
+        else:
+            self.stable_streak = 0
+
+        # Victory/Loss Checks
+        if self.stable_streak >= 15:
+            self.game_over, self.victory = True, True
+        elif any(v <= 0 for v in [self.villagers, self.deer, self.forest]):
+            self.game_over = True
 
 # -----------------------------
-# Simple & Clean UI
+# THE DISPLAY (STREAMLIT UI)
 # -----------------------------
 st.set_page_config(page_title="Jungle King", layout="centered")
 
-if 'game' not in st.session_state: st.session_state.game = JungleKing()
-if 'high_score' not in st.session_state: st.session_state.high_score = 0
+if 'game' not in st.session_state:
+    st.session_state.game = JungleKing()
 jk = st.session_state.game
 
-# Update High Score
-if jk.cumulative_score > st.session_state.high_score:
-    st.session_state.high_score = jk.cumulative_score
-
 st.title("🦁 Jungle King")
+st.write(f"📅 **Year:** {jk.turn} | 🏆 **Score:** {jk.cumulative_score}")
 
-# Simple Top Bar
-c1, c2, c3 = st.columns(3)
-c1.write(f"📅 **Year {jk.turn}**")
-c2.write(f"🪙 **Score: {jk.cumulative_score}**")
-c3.write(f"🏆 **Best: {st.session_state.high_score}**")
+# Resource Dashboard
+m1, m2, m3, m4 = st.columns(4)
+l_ico, l_msg = jk.get_status_ui("lions", jk.lions)
+d_ico, d_msg = jk.get_status_ui("deer", jk.deer)
+f_ico, f_msg = jk.get_status_ui("forest", jk.forest)
 
-with st.expander("📜 The Elder's Wisdom (Rules)", expanded=jk.turn == 0):
-    st.write("Welcome, young King! Here is how our world works:")
-    st.write("• **Keep the Balance:** Lions keep the deer in check. If lions disappear, deer will eat our forest away!")
-    
-    st.write("• **Feed the Tribe:** Your people need deer for dinner. If the deer vanish, the village suffers.")
-    st.write("• **Stable Heart:** Keep the Lions and Deer in a happy ratio for **15 years** to win!")
-    
+m1.metric(f"{l_ico} Lions", jk.lions, l_msg)
+m2.metric(f"{d_ico} Deer", jk.deer, d_msg)
+m3.metric(f"{f_ico} Forest", int(jk.forest), f_msg)
+m4.metric("🏡 People", jk.villagers)
 
-st.divider()
-
-# Resource Grid (Mobile-friendly 2x2)
-g1, g2 = st.columns(2)
-g1.metric(f"{jk.get_status_emoji('lions', jk.lions)} Lions", jk.lions)
-g1.metric(f"{jk.get_status_emoji('forest', jk.forest)} Forest", jk.forest)
-g2.metric(f"{jk.get_status_emoji('deer', jk.deer)} Deer", jk.deer)
-g2.metric(f"{jk.get_status_emoji('village', jk.villagers)} People", jk.villagers)
-
-# Stability Bar
-st.write(f"**Peace Meter ({jk.stable_streak}/15 Years of Balance)**")
+# Peace Meter
+st.write(f"**Peace Meter ({jk.stable_streak}/15 Years)**")
 st.progress(jk.stable_streak / 15)
 
 if jk.game_over:
-    if jk.victory: st.success(f"👑 YOU ARE THE JUNGLE KING! Score: {jk.cumulative_score}")
-    else: st.error("💀 The Jungle has fallen. Nature is out of balance.")
-    st.button("🔄 Start New Reign", on_click=jk.reset, type="primary", use_container_width=True)
+    if jk.victory:
+        st.success(f"👑 VICTORY! Your reign achieved perfect balance. Final Score: {jk.cumulative_score}")
+    else:
+        st.error(f"💀 THE FALL: Your kingdom has collapsed. Final Score: {jk.cumulative_score}")
+    st.button("🔄 Start New Reign", on_click=jk.reset, use_container_width=True)
 else:
-    # Action Selection
-    choice = st.selectbox("What should we do this year?", 
-                         ["Hunt Deer", "Hunt Lions", "Expand Village", "Protect Forest"])
+    # Village Elder Jovial Commentary
+    choice = st.selectbox("Command:", ["Hunt Deer", "Hunt Lions", "Expand Village", "Protect Forest"])
     
-    # The Elder's Advice Box
     advice = {
-        "Hunt Deer": "🏹 'A good hunt fills our bellies, but don't take too many or the lions will starve!'" ,
-        "Hunt Lions": "⚔️ 'The lions are getting bold. We should thin the pride to save our deer.'",
-        "Expand Village": "🏗️ 'Our families are growing! We need more homes, even if it costs some trees.'",
-        "Protect Forest": "🛡️ 'The woods look thin. Let's send the youngsters to plant new life.'"
+        "Hunt Deer": "🏹 'The pots are low, but don't take so many that the lions look at us instead!'" ,
+        "Hunt Lions": "⚔️ 'The big cats are numerous. A little culling keeps the village safe.'",
+        "Expand Village": "🏗️ 'More neighbors means more glory, though the trees might grumble.'",
+        "Protect Forest": "🛡️ 'Water the saplings, King! A lush forest is the mother of all deer.'"
     }
     st.info(advice[choice])
 
-    if st.button("MAKE IT SO!", type="primary", use_container_width=True):
+    if st.button("EXECUTE ORDER", type="primary", use_container_width=True):
         jk.step(choice.lower().replace(" ", "_").replace("lions", "lion"))
         st.rerun()
 
-    # Village News (Recent Effects)
+    # Event Feed
     if jk.last_news:
         with st.container(border=True):
-            st.write("**Recent News:**")
-            for news in jk.last_news: st.write(f"• {news}")
+            for news in jk.last_news:
+                st.write(f"• {news}")
 
-# Trend History
+# Historical Trends
 if jk.history:
     with st.expander("📈 Jungle Trends"):
         st.line_chart(pd.DataFrame(jk.history).set_index("Year"))
